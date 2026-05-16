@@ -35,6 +35,22 @@ pub fn process_undelegate_legacy_boost_v2(
     }
 
     load_managed_proof(managed_proof_account_info, miner.key, false)?;
+    let managed_proof = {
+        let data = managed_proof_account_info.data.borrow();
+        *ManagedProof::try_from_bytes(&data)?
+    };
+    let expected_managed_proof = Pubkey::create_program_address(
+        &[
+            crate::consts::MANAGED_PROOF,
+            miner.key.as_ref(),
+            &[managed_proof.bump],
+        ],
+        &crate::id(),
+    )?;
+    if *managed_proof_account_info.key != expected_managed_proof {
+        return Err(ProgramError::InvalidAccountData);
+    }
+
     load_delegated_boost_v2(
         delegate_boost_account_info,
         staker.key,
@@ -96,11 +112,6 @@ pub fn process_undelegate_legacy_boost_v2(
     if *staker_token_account_info.key != expected_staker_token {
         return Err(ProgramError::InvalidAccountData);
     }
-
-    let managed_proof = {
-        let data = managed_proof_account_info.data.borrow();
-        *ManagedProof::try_from_bytes(&data)?
-    };
 
     {
         let mut data = delegate_boost_account_info
