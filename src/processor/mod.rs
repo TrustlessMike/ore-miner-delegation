@@ -1,3 +1,4 @@
+pub mod legacy_undelegate_boost_v2;
 pub mod delegate_boost;
 pub mod delegate_boost_v2;
 pub mod delegate_stake;

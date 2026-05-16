@@ -88,6 +88,11 @@ pub fn process_instruction(
         Instructions::UpdateMiningAuthority => {
             processor::update_miner_authority::process_update_miner_authority(accounts, data)?;
         }
+        Instructions::LegacyUndelegateBoostV2 => {
+            processor::legacy_undelegate_boost_v2::process_legacy_undelegate_boost_v2(
+                accounts, data,
+            )?;
+        }
     }
 
     Ok(())

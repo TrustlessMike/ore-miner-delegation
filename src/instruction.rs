@@ -11,7 +11,12 @@ use solana_program::{
 use spl_associated_token_account::get_associated_token_address;
 
 use crate::{
-    global_boost::{directory_pda, reservation_pda, GLOBAL_BOOST_ID}, impl_instruction_from_bytes, impl_to_bytes, pda::{delegated_boost_pda, delegated_boost_v2_pda, delegated_stake_pda, managed_proof_pda}
+    consts::LEGACY_BOOST_PROGRAM_ID,
+    global_boost::{directory_pda, reservation_pda, GLOBAL_BOOST_ID},
+    impl_instruction_from_bytes, impl_to_bytes,
+    pda::{
+        delegated_boost_pda, delegated_boost_v2_pda, delegated_stake_pda, managed_proof_pda,
+    },
 };
 
 #[repr(u8)]
@@ -34,6 +39,7 @@ pub enum Instructions {
     RegisterGlobalBoost,
     RotateGlobalBoost,
     UpdateMiningAuthority,
+    LegacyUndelegateBoostV2,
 }
 
 impl Into<Vec<u8>> for Instructions {
@@ -260,8 +266,7 @@ pub fn delegate_boost(staker: Pubkey, miner: Pubkey, mint: Pubkey, amount: u64) 
     let managed_proof_address = managed_proof_pda(miner);
     let delegated_boost_address = delegated_boost_pda(miner, staker, mint);
 
-    let staker_token_account =
-        get_associated_token_address(&staker, &mint);
+    let staker_token_account = get_associated_token_address(&staker, &mint);
     let managed_proof_token_account =
         get_associated_token_address(&managed_proof_address.0, &mint);
 
@@ -505,6 +510,59 @@ pub fn undelegate_boost_v2(staker: Pubkey, miner: Pubkey, mint: Pubkey, amount: 
     }
 }
 
+pub fn legacy_undelegate_boost_v2(
+    staker: Pubkey,
+    miner: Pubkey,
+    mint: Pubkey,
+    amount: u64,
+) -> Instruction {
+    let managed_proof_address = managed_proof_pda(miner);
+    let delegated_boost_address = delegated_boost_v2_pda(miner, staker, mint);
+
+    let staker_token_account =
+        get_associated_token_address(&staker, &mint);
+    let managed_proof_token_account =
+        get_associated_token_address(&managed_proof_address.0, &mint);
+
+    let boost_pda = Pubkey::find_program_address(
+        &[b"boost", mint.as_ref()],
+        &LEGACY_BOOST_PROGRAM_ID,
+    );
+    let boost_tokens_address =
+        spl_associated_token_account::get_associated_token_address(&boost_pda.0, &mint);
+    let stake_pda = Pubkey::find_program_address(
+        &[b"stake", managed_proof_address.0.as_ref(), boost_pda.0.as_ref()],
+        &LEGACY_BOOST_PROGRAM_ID,
+    );
+
+    Instruction {
+        program_id: crate::id(),
+        accounts: vec![
+            AccountMeta::new(staker, true),
+            AccountMeta::new_readonly(miner, false),
+            AccountMeta::new(managed_proof_address.0, false),
+            AccountMeta::new(managed_proof_token_account, false),
+            AccountMeta::new(delegated_boost_address.0, false),
+            AccountMeta::new(boost_pda.0, false),
+            AccountMeta::new_readonly(mint, false),
+            AccountMeta::new(staker_token_account, false),
+            AccountMeta::new(boost_tokens_address, false),
+            AccountMeta::new(stake_pda.0, false),
+            AccountMeta::new_readonly(LEGACY_BOOST_PROGRAM_ID, false),
+            AccountMeta::new_readonly(spl_token::id(), false),
+        ],
+        data: [
+            Instructions::LegacyUndelegateBoostV2.to_vec(),
+            UndelegateBoostArgs {
+                amount: amount.to_le_bytes(),
+            }
+            .to_bytes()
+            .to_vec(),
+        ]
+        .concat(),
+    }
+}
+
 pub fn migrate_boost_to_v2(staker: Pubkey, miner: Pubkey, mint: Pubkey) -> Instruction {
     let managed_proof_address = managed_proof_pda(miner);
     let delegated_boost_address = delegated_boost_pda(miner, staker, mint);
@@ -602,3 +660,52 @@ pub fn update_miner_authority(miner: Pubkey, new_miner_auth: Pubkey) -> Instruct
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use super::*;
+
+    #[test]
+    fn legacy_undelegate_boost_v2_builder_matches_legacy_accounts() {
+        let staker =
+            Pubkey::from_str("DTQwXDAVa72ktWzWkaadphU9cPchU7XvnpML5B6npMLS").unwrap();
+        let miner =
+            Pubkey::from_str("mineXqpDeBeMR8bPQCyy9UneJZbjFywraS3koWZ8SSH").unwrap();
+        let mint =
+            Pubkey::from_str("oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp").unwrap();
+        let amount = 654_518_180_394_u64;
+
+        let instruction = legacy_undelegate_boost_v2(staker, miner, mint, amount);
+
+        let expected_accounts = [
+            "DTQwXDAVa72ktWzWkaadphU9cPchU7XvnpML5B6npMLS",
+            "mineXqpDeBeMR8bPQCyy9UneJZbjFywraS3koWZ8SSH",
+            "6BqTJKU58qatApE21ehNXUrBHSSSM8C8uQ3ZJcLZ22HA",
+            "9knTXuzP87W4f5MSjwX65iU7CBEUF1yfGbYsn74toEdN",
+            "FGWgsFCgwnBwiyS4jrZSD6emRvYjc17GFGaJ2Q57s3jx",
+            "8MiwoWeCGhxPgjBqEPif2GTxBK6UeFiX6QypeULnYqA7",
+            "oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp",
+            "B3yMLVULcQw9eeUMxEEHb1qMybKY2KZRfD3nQGFaw69n",
+            "A3pWPqVJ9999q4S6zw296E3KJ8Lo9DbbqYafXnKXM3Mo",
+            "2fpUVijnhKkDoSQaHfDVPpLmeKRpcGtNRQgwjBk4Jd5E",
+            "boostmPwypNUQu8qZ8RoWt5DXyYSVYxnBXqbbrGjecc",
+            "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        ];
+
+        assert_eq!(instruction.program_id, crate::id());
+        assert_eq!(
+            instruction.data[0],
+            Instructions::LegacyUndelegateBoostV2 as u8
+        );
+        assert_eq!(&instruction.data[1..], &amount.to_le_bytes());
+        assert_eq!(instruction.accounts.len(), expected_accounts.len());
+        for (meta, expected) in instruction.accounts.iter().zip(expected_accounts) {
+            assert_eq!(meta.pubkey, Pubkey::from_str(expected).unwrap());
+        }
+        assert!(instruction.accounts[0].is_signer);
+        assert!(!instruction.accounts[1].is_signer);
+        assert!(!instruction.accounts[10].is_writable);
+        assert!(!instruction.accounts[11].is_writable);
+    }
+}
