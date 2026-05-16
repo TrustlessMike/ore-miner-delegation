@@ -34,6 +34,7 @@ pub enum Instructions {
     RegisterGlobalBoost,
     RotateGlobalBoost,
     UpdateMiningAuthority,
+    UndelegateLegacyBoostV2,
 }
 
 impl Into<Vec<u8>> for Instructions {
@@ -602,3 +603,98 @@ pub fn update_miner_authority(miner: Pubkey, new_miner_auth: Pubkey) -> Instruct
     }
 }
 
+pub fn undelegate_legacy_boost_v2(
+    staker: Pubkey,
+    miner: Pubkey,
+    mint: Pubkey,
+    amount: u64,
+) -> Instruction {
+    let managed_proof_address = managed_proof_pda(miner);
+    let delegated_boost_address = delegated_boost_v2_pda(miner, staker, mint);
+    let staker_token_account = get_associated_token_address(&staker, &mint);
+    let managed_proof_token_account =
+        get_associated_token_address(&managed_proof_address.0, &mint);
+    let legacy_boost_program = crate::consts::LEGACY_BOOST_PROGRAM;
+    let boost_pda = Pubkey::find_program_address(&[b"boost", mint.as_ref()], &legacy_boost_program);
+    let boost_tokens_address =
+        spl_associated_token_account::get_associated_token_address(&boost_pda.0, &mint);
+    let stake_pda = Pubkey::find_program_address(
+        &[b"stake", managed_proof_address.0.as_ref(), boost_pda.0.as_ref()],
+        &legacy_boost_program,
+    );
+
+    Instruction {
+        program_id: crate::id(),
+        accounts: vec![
+            AccountMeta::new(staker, true),
+            AccountMeta::new_readonly(miner, false),
+            AccountMeta::new(managed_proof_address.0, false),
+            AccountMeta::new(managed_proof_token_account, false),
+            AccountMeta::new(delegated_boost_address.0, false),
+            AccountMeta::new(boost_pda.0, false),
+            AccountMeta::new_readonly(mint, false),
+            AccountMeta::new(staker_token_account, false),
+            AccountMeta::new(boost_tokens_address, false),
+            AccountMeta::new(stake_pda.0, false),
+            AccountMeta::new_readonly(legacy_boost_program, false),
+            AccountMeta::new_readonly(spl_token::id(), false),
+        ],
+        data: [
+            Instructions::UndelegateLegacyBoostV2.to_vec(),
+            UndelegateBoostArgs {
+                amount: amount.to_le_bytes(),
+            }
+            .to_bytes()
+            .to_vec(),
+        ]
+        .concat(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use super::*;
+
+    #[test]
+    fn legacy_undelegate_boost_v2_builder_matches_affected_position() {
+        let staker =
+            Pubkey::from_str("DTQwXDAVa72ktWzWkaadphU9cPchU7XvnpML5B6npMLS").unwrap();
+        let miner =
+            Pubkey::from_str("mineXqpDeBeMR8bPQCyy9UneJZbjFywraS3koWZ8SSH").unwrap();
+        let mint =
+            Pubkey::from_str("oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp").unwrap();
+        let amount = 654_518_180_394_u64;
+
+        let instruction = undelegate_legacy_boost_v2(staker, miner, mint, amount);
+
+        let expected_accounts = [
+            ("DTQwXDAVa72ktWzWkaadphU9cPchU7XvnpML5B6npMLS", true, true),
+            ("mineXqpDeBeMR8bPQCyy9UneJZbjFywraS3koWZ8SSH", false, false),
+            ("6BqTJKU58qatApE21ehNXUrBHSSSM8C8uQ3ZJcLZ22HA", false, true),
+            ("9knTXuzP87W4f5MSjwX65iU7CBEUF1yfGbYsn74toEdN", false, true),
+            ("FGWgsFCgwnBwiyS4jrZSD6emRvYjc17GFGaJ2Q57s3jx", false, true),
+            ("8MiwoWeCGhxPgjBqEPif2GTxBK6UeFiX6QypeULnYqA7", false, true),
+            ("oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp", false, false),
+            ("B3yMLVULcQw9eeUMxEEHb1qMybKY2KZRfD3nQGFaw69n", false, true),
+            ("A3pWPqVJ9999q4S6zw296E3KJ8Lo9DbbqYafXnKXM3Mo", false, true),
+            ("2fpUVijnhKkDoSQaHfDVPpLmeKRpcGtNRQgwjBk4Jd5E", false, true),
+            ("boostmPwypNUQu8qZ8RoWt5DXyYSVYxnBXqbbrGjecc", false, false),
+            ("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", false, false),
+        ];
+
+        assert_eq!(instruction.program_id, crate::id());
+        assert_eq!(instruction.accounts.len(), expected_accounts.len());
+        for (actual, (expected_key, expected_signer, expected_writable)) in
+            instruction.accounts.iter().zip(expected_accounts)
+        {
+            assert_eq!(actual.pubkey, Pubkey::from_str(expected_key).unwrap());
+            assert_eq!(actual.is_signer, expected_signer);
+            assert_eq!(actual.is_writable, expected_writable);
+        }
+
+        assert_eq!(instruction.data[0], Instructions::UndelegateLegacyBoostV2 as u8);
+        assert_eq!(&instruction.data[1..9], &amount.to_le_bytes());
+    }
+}
