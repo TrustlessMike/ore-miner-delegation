@@ -1,0 +1,42 @@
+name: lib-checks
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - legacy-boost-v2-recovery
+
+jobs:
+  lib-checks:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout ore-miner-delegation
+        uses: actions/checkout@v4
+        with:
+          path: ore-miner-delegation
+          fetch-depth: 0
+
+      - name: Checkout ore-boost path dependency
+        uses: actions/checkout@v4
+        with:
+          repository: regolith-labs/ore-boost
+          path: ore-boost
+
+      - name: Install Rust 1.81.0
+        run: |
+          rustup toolchain install 1.81.0 --profile minimal
+          rustup component add rustfmt --toolchain 1.81.0
+
+      - name: Check patch whitespace
+        working-directory: ore-miner-delegation
+        run: git diff --check origin/main...HEAD
+
+      - name: Cargo check lib
+        working-directory: ore-miner-delegation
+        run: cargo +1.81.0 check --lib
+
+      - name: Cargo test lib
+        working-directory: ore-miner-delegation
+        run: cargo +1.81.0 test --lib
